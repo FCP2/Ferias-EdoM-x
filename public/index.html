@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ferias – Estado de México</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; }
+    #map { height: 60vh; min-height: 400px; }
+    .list-wrapper { max-height: 60vh; overflow: auto; }
+    .cursor-pointer { cursor: pointer; }
+  </style>
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-expand-lg" style="background-color: #ffffff;">
+  <div class="container">
+    <a class="navbar-brand" href="#">
+      <img src="https://lh3.googleusercontent.com/d/15DZbMCYDoQMblhjfIznTahYvBFZlGFnP"  
+           width="400" 
+           height="auto" 
+           class="d-inline-block align-text-top">
+    </a>
+  </div>
+</nav>
+<!-- Navbar inferior -->
+<nav class="navbar fixed-bottom" style="background-color: #9f2241; color: #ffffff;">
+  <div class="container justify-content-center">
+    <span class="navbar-text small" style="color: #ffffff;">
+      Información oficial: Politícas Transversales y de Gobernabilidad ©ATI 2025
+    </span>
+  </div>
+</nav>
+
+<main class="container my-4">
+  <div class="row g-4">
+    <div class="col-12 col-lg-8">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-white">
+          <div class="d-flex gap-2 align-items-center">
+            <span class="fw-semibold me-2">Mapa</span>
+            <div class="ms-auto d-flex gap-2">
+              <input id="searchInput" type="search" class="form-control form-control-sm" placeholder="Buscar municipio..." />
+              <select id="dateFilter" class="form-select form-select-sm">
+                <option value="all" selected>Todos los eventos</option>
+                <option value="30">Próximos 30 días</option>
+                <option value="month">Este mes</option>
+              </select>
+              <button id="resetBtn" class="btn btn-sm btn-outline-secondary">Limpiar</button>
+            </div>
+          </div>
+        </div>
+        <div class="card-body p-0 position-relative">
+          <div id="map"></div>
+          <!-- Menú de capas flotante en esquina superior derecha -->
+          <div class="position-absolute top-0 end-0 m-2 p-2 bg-white rounded shadow" style="z-index:1000;">
+            <select id="baseLayerSelect" class="form-select form-select-sm">
+              <option value="osm">OSM</option>
+              <option value="relief">Relieve</option>
+              <option value="stamen">Stamen Terrain</option>
+              <option value="cartoLight">Carto Light</option>
+              <option value="cartoDark">Carto Dark</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-4">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-white d-flex align-items-center">
+          <span class="fw-semibold">Ferias</span>
+          <span class="ms-auto small text-muted" id="countLabel"></span>
+        </div>
+        <div class="list-group list-group-flush list-wrapper" id="feriasList"></div>
+      </div>
+    </div>
+  </div>
+  <div id="map" style="height: 500px; position: relative;"></div>
+</main>
+
+<div class="modal fade" id="detalleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header bg-primary-subtle">
+        <h5 class="modal-title" id="modalTitle">Detalle de feria</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/wicket/1.3.4/wicket.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/wicket/1.3.4/wicket-leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://unpkg.com/wellknown/wellknown.js"></script>
+
+<script>
+const map = L.map('map').setView([19.4, -99.1], 8);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '© OpenStreetMap contrib.'
+}).addTo(map);
+
+let markers = [];
+let feriasData = [];
+const detalleModal = new bootstrap.Modal('#detalleModal');
+
+// Funciones de fecha
+function parseFecha(fechaStr) {
+  const parts = fechaStr.split('/');
+  if(parts.length !== 3) return null;
+  const dia = parseInt(parts[0],10), mes = parseInt(parts[1],10)-1, anio = parseInt(parts[2],10);
+  return new Date(anio < 100 ? anio + (anio<50?2000:1900) : anio, mes, dia);
+}
+function formatDate(fechaStr) {
+  const d = parseFecha(fechaStr);
+  if(!d) return fechaStr;
+  return d.toLocaleDateString('es-MX', { year:'numeric', month:'long', day:'numeric' });
+}
+function isWithinFilter(fechaStr, filter) {
+  if(filter==='all') return true;
+  const fecha = parseFecha(fechaStr);
+  if(!fecha) return false;
+  const today = new Date(); today.setHours(0,0,0,0);
+  if(filter==='30'){ const limite = new Date(today); limite.setDate(limite.getDate()+30); return fecha>=today && fecha<=limite; }
+  if(filter==='month') return fecha.getMonth()===today.getMonth() && fecha.getFullYear()===today.getFullYear();
+  return true;
+}
+
+// Abrir detalle
+function abrirDetalle(feria){
+  document.getElementById('modalTitle').textContent = `${feria.nombre} (${feria.municipio})`;
+  document.getElementById('modalBody').innerHTML = `
+    <p><strong>Municipio:</strong> ${feria.municipio}</p>
+    <p><strong>Localidad:</strong> ${feria.localidad||'-'}</p>
+    <p><strong>Fecha:</strong> ${feria.fecha}</p>
+    <p><strong>Duración:</strong> ${feria.duracion||'-'}</p>
+    <p><strong>Motivo:</strong> ${feria.motivo_de_celebracion||'-'}</p>
+    <p><strong>Artistas invitados:</strong> ${feria.artistas_invitados||'-'}</p>
+    <p><strong>Status:</strong> ${feria.Status||'-'}</p>
+  `;
+  detalleModal.show();
+}
+
+// Renderizado polígonos y marcadores optimizado
+// Renderizado solo marcadores con botón en popup
+function renderFerias(data, municipiosMap) {
+  // Limpiar marcadores anteriores
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+
+  // Agrupar ferias por municipio
+  const feriasPorMunicipio = {};
+  data.forEach(f => {
+    const key = f.municipio.trim().toLowerCase();
+    if (!feriasPorMunicipio[key]) feriasPorMunicipio[key] = [];
+    feriasPorMunicipio[key].push(f);
+  });
+
+  data.forEach(f => {
+    const key = f.municipio.trim().toLowerCase();
+    const muni = municipiosMap[key];
+    if (muni && muni.poligono) {
+      try {
+        const geo = wellknown.parse(muni.poligono);
+        const center = L.geoJSON(geo).getBounds().getCenter();
+
+        // Crear popup con botón
+        const popupContent = `
+          <div>
+            <strong>${muni.municipio}</strong><br>
+            <button class="btn btn-sm btn-primary mt-1" onclick="abrirDetalleMunicipio('${muni.municipio}', window._municipiosFerias['${key}'])">
+              Ver información
+            </button>
+          </div>
+        `;
+
+        const marker = L.marker(center)
+          .bindPopup(popupContent)
+          .addTo(map);
+
+        markers.push(marker);
+      } catch (e) {
+        console.error('Error con WKT', muni.municipio, e);
+      }
+    }
+  });
+
+  // Ajustar mapa a bounds de todos los marcadores
+  if (markers.length) {
+    const group = L.featureGroup(markers);
+    map.fitBounds(group.getBounds(), { padding: [20, 20] });
+  }
+
+  // Guardamos ferias por municipio para los botones
+  window._municipiosFerias = feriasPorMunicipio;
+}
+// Renderizado lista
+function formatDateSinAnio(fechaStr) {
+  const d = parseFecha(fechaStr);
+  if(!d) return fechaStr;
+  return d.toLocaleDateString('es-MX', { month:'long', day:'2-digit' }); // sin year
+}
+
+function renderListaAgrupada(data, municipiosMap) {
+  const searchText = document.getElementById('searchInput').value.trim().toLowerCase();
+  const dateFilter = document.getElementById('dateFilter').value;
+  const listEl = document.getElementById('feriasList');
+  listEl.innerHTML = '';
+
+  const agrupadas = {};
+  data.forEach(f => {
+    if (!agrupadas[f.municipio]) agrupadas[f.municipio] = [];
+    agrupadas[f.municipio].push(f);
+  });
+
+  let count = 0, feriasFiltradasTotal = [];
+
+  Object.keys(agrupadas).sort().forEach(mun => {
+    const feriasFiltradas = agrupadas[mun].filter(f =>
+      f.municipio.toLowerCase().includes(searchText) &&
+      isWithinFilter(f.fecha, dateFilter)
+    );
+    if (feriasFiltradas.length === 0) return;
+    feriasFiltradasTotal.push(...feriasFiltradas);
+
+    // Próxima feria comparando solo mes y día
+    const hoy = new Date();
+    hoy.setHours(0,0,0,0);
+
+    const proximas = feriasFiltradas
+      .filter(f => {
+        const d = parseFecha(f.fecha);
+        if(!d) return false;
+        const dHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+        const dFeria = new Date(dHoy.getFullYear(), d.getMonth(), d.getDate());
+        return dFeria >= dHoy; // solo futuras en el calendario actual
+      })
+      .sort((a,b) => {
+        const da = parseFecha(a.fecha);
+        const db = parseFecha(b.fecha);
+        const daF = new Date(hoy.getFullYear(), da.getMonth(), da.getDate());
+        const dbF = new Date(hoy.getFullYear(), db.getMonth(), db.getDate());
+        return daF - dbF;
+      });
+
+    const proximaFeria = proximas.length > 0 ? proximas[0].fecha : feriasFiltradas[0].fecha;
+
+    const li = document.createElement('a');
+    li.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center cursor-pointer';
+    li.innerHTML = `
+      <div class="flex-grow-1">
+        <div class="fw-semibold">${mun}</div>
+        <div class="small text-muted">Próxima feria: ${formatDateSinAnio(proximaFeria)}</div>
+      </div>
+      <span class="badge text-bg-primary">${feriasFiltradas.length}</span>
+    `;
+    li.addEventListener('click', () => abrirDetalleMunicipio(mun, feriasFiltradas));
+    listEl.appendChild(li);
+    count++;
+  });
+
+  document.getElementById('countLabel').textContent = `${count} municipio(s)`;
+  renderFerias(feriasFiltradasTotal, municipiosMap);
+}
+
+function abrirDetalleMunicipio(municipio, ferias){
+  document.getElementById('modalTitle').textContent=`${municipio} — ${ferias.length} feria(s)`;
+  document.getElementById('modalBody').innerHTML = ferias.map(f=>`
+    <div class="border rounded p-3 mb-2">
+      <div class="fw-semibold">${f.nombre}</div>
+      <div class="small text-muted">${formatDate(f.fecha)} • ${f.localidad||'-'}</div>
+      <p class="mb-0">${f.motivo_de_celebracion||'-'}</p>
+      <p class="mb-0"><strong>Artistas:</strong> ${f.artistas_invitados||'-'}</p>
+      <p class="mb-0"><strong>Status:</strong> ${f.Status||'-'}</p>
+    </div>
+  `).join('');
+  detalleModal.show();
+}
+
+// Eventos búsqueda/filtro
+document.getElementById('searchInput').addEventListener('input',()=>renderListaAgrupada(feriasData, window._municipiosMap));
+document.getElementById('dateFilter').addEventListener('change',()=>renderListaAgrupada(feriasData, window._municipiosMap));
+document.getElementById('resetBtn').addEventListener('click',()=>{
+  document.getElementById('searchInput').value='';
+  document.getElementById('dateFilter').value='all';
+  renderListaAgrupada(feriasData, window._municipiosMap);
+});
+
+// Carga de datos
+Promise.all([
+  fetch('/api/ferias').then(r=>r.json()),
+  fetch('municipios.json').then(r=>r.json())
+]).then(([ferias, munis])=>{
+  feriasData = ferias;
+  const municipiosEnFerias = new Set(ferias.map(f=>f.municipio.trim().toLowerCase()));
+  const municipiosMap={};
+  munis.forEach(m=>{
+    const key=m.municipio.trim().toLowerCase();
+    if(municipiosEnFerias.has(key)) municipiosMap[key]=m;
+  });
+  window._municipiosMap = municipiosMap;
+  renderListaAgrupada(feriasData, municipiosMap);
+}).catch(err=>console.error('Error cargando datos:', err));
+// Definir capas base
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' });
+  const reliefLayer = L.tileLayer('https://tile.opentopomap.org/{z}/{x}/{y}.png', { attribution: '© OpenTopoMap' });
+  const stamenTerrain = L.tileLayer('https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg', { attribution: '© Stamen' });
+  const cartoLight = L.tileLayer('https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png', { attribution: '© Carto' });
+  const cartoDark = L.tileLayer('https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', { attribution: '© Carto' });
+
+  // Agregar capa inicial
+  osmLayer.addTo(map);
+
+  // Cambiar capa base al seleccionar del dropdown
+  const baseSelect = document.getElementById('baseLayerSelect');
+  let currentBase = osmLayer;
+
+  baseSelect.addEventListener('change', () => {
+    map.removeLayer(currentBase);
+    switch(baseSelect.value){
+      case 'osm': currentBase = osmLayer; break;
+      case 'relief': currentBase = reliefLayer; break;
+      case 'stamen': currentBase = stamenTerrain; break;
+      case 'cartoLight': currentBase = cartoLight; break;
+      case 'cartoDark': currentBase = cartoDark; break;
+    }
+    currentBase.addTo(map);
+  });
+</script>
+
+</body>
+</html>
